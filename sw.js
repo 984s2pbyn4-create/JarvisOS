@@ -1,7 +1,7 @@
 /* Scope-aware offline cache. All paths relative to this worker's directory. */
-const VERSION='jarvis-ipad-offline-0.1.0';
+const VERSION='jarvis-ipad-offline-0.2.0';
 const ROOT=new URL('./',self.location.href);
-const PRECACHE=['./','./index.html','./styles.css','./manifest.webmanifest','./src/app.js','./src/db.js','./src/icons.js','./assets/icon-192.png','./assets/icon-512.png','./assets/apple-touch-icon.png'];
+const PRECACHE=['./','./index.html','./styles.css','./manifest.webmanifest','./app.js','./db.js','./icons.js','./hologram.js','./commands.js','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(VERSION).then(cache=>cache.addAll(PRECACHE.map(path=>new URL(path,ROOT).toString()))));
   // Let active clients finish; new worker activates on restart.
@@ -19,3 +19,5 @@ self.addEventListener('fetch',event=>{
   }
   event.respondWith((async()=>{const cache=await caches.open(VERSION);const cached=await cache.match(event.request);if(cached)return cached;try{const response=await fetch(event.request);if(response.ok&&response.type==='basic')cache.put(event.request,response.clone());return response;}catch{return Response.error();}})());
 });
+
+self.addEventListener('message', e=>{if(e.data?.type==='SKIP_WAITING')self.skipWaiting();});

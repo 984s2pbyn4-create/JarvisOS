@@ -2,17 +2,30 @@
   "id": "./",
   "name": "JARVIS OS — iPad Edition",
   "short_name": "JARVIS",
-  "description": "Личный автономный командный центр для iPad",
+  "description": "Автономный командный центр JARVIS OS 0.2 для iPad с двумя окнами и интерактивным голографическим ядром.",
   "lang": "ru",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#050b18",
   "theme_color": "#050b18",
   "orientation": "any",
   "icons": [
-    {"src":"./assets/icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
-    {"src":"./assets/icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }
