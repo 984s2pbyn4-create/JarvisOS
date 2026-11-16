@@ -81,3 +81,11 @@
 @keyframes voice-pulse{50%{box-shadow:0 0 0 5px rgba(255,95,86,.075)}}
 @media(max-width:650px){.command-input{gap:6px;padding:10px}.command-input input{min-width:0;width:100px}.command-execute{padding:9px 8px}}
 @media(prefers-reduced-motion:reduce){.icon-button.voice-active{animation:none}}
+
+/* 0.2.2 voice lifecycle diagnostics */
+.voice-diagnostic{margin-top:22px;padding:19px;border:1px solid var(--border);border-radius:16px;background:var(--panel);min-width:0;}
+.voice-diagnostic-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px;}
+.voice-diagnostic h3{margin:0 0 7px;font-size:17px;color:var(--text)}
+.voice-diagnostic p{color:var(--muted);font-size:12px;line-height:1.6;max-width:680px;margin:0}
+.voice-log-text{display:block;width:100%;min-height:238px;resize:vertical;border:1px solid var(--border);border-radius:11px;padding:13px;font:12px/1.55 ui-monospace,Menlo,Monaco,Consolas,monospace;background:rgba(2,9,22,.85);color:var(--accent);overflow:auto;white-space:pre;user-select:text;-webkit-user-select:text;}
+@media(max-width:650px){.voice-diagnostic{padding:12px}.voice-diagnostic-head .secondary-btn{width:100%;justify-content:center}}

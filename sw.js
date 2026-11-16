@@ -1,5 +1,5 @@
 /* Scope-aware offline cache. All paths relative to this worker's directory. */
-const VERSION='jarvis-ipad-offline-0.2.1';
+const VERSION='jarvis-ipad-offline-0.2.2';
 const ROOT=new URL('./',self.location.href);
 const PRECACHE=['./','./index.html','./styles.css','./manifest.webmanifest','./app.js','./db.js','./icons.js','./hologram.js','./commands.js','./voice.js','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 self.addEventListener('install',event=>{
