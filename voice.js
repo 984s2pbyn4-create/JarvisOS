@@ -1,7 +1,7 @@
-/* JARVIS OS 0.2.2 voice controller.
+/* JARVIS OS 0.2.3 voice controller.
  * iPadOS 27 WebKit may keep the platform mic indicator on after the recognizer ends,
  * and abruptly stopping a successful session may break the following recognition.
- * Keep natural completion by default; make fast stop opt-in and observable.
+ * Keep natural completion; disable manual stop after final results (WebKit 321436).
  * No getUserMedia streams are opened by this module.
  */
 export function createVoiceController({
@@ -19,6 +19,7 @@ export function createVoiceController({
   let recognizer=null,epoch=0,result='',recognitionError='',capture='unknown';
   let timeoutId=null,preambleId=null,speaking=null;
   let session=null;
+  const sessions=[];
   const history=[];
   const active=()=>stage!=='idle';
   function log(event){
@@ -39,13 +40,14 @@ export function createVoiceController({
   function diagnostics(){
     return {stage,message,capture,
       session:session?{...session}:null,
+      sessions:sessions.map(s=>({...s})),
       events:history.map(item=>({...item}))};
   }
   function diagnosticText(){
     const d=diagnostics();
     const fmt=ms=>ms===null||ms===undefined?'нет':new Date(ms).toLocaleTimeString('ru-RU',{hour12:false})+'.'+String(ms%1000).padStart(3,'0');
     const s=d.session;
-    const lines=['JARVIS OS v0.2.2 / диагностика речи','Состояние: '+d.stage,'Захват звука (события Web Speech): '+d.capture,
+    const lines=['JARVIS OS v1.0 / диагностика речи','Состояние: '+d.stage,'Захват звука (события Web Speech): '+d.capture,
       'События браузера не показывают фактическое состояние системного индикатора iPadOS.'];
     if(s){
       lines.push('Сеанс '+s.id+': '+(s.mode==='fast'?'быстрый':'надёжный'));
@@ -55,6 +57,12 @@ export function createVoiceController({
       lines.push('Служба отключена (end): '+fmt(s.endAt));
       if(s.resultAt&&s.audioEndAt)lines.push('Результат → audioend: '+(s.audioEndAt-s.resultAt)+' мс');
       if(s.audioEndAt&&s.endAt)lines.push('audioend → end: '+(s.endAt-s.audioEndAt)+' мс');
+      if(s.endAt&&!s.audioEndAt)lines.push('ВАЖНО: end получен, audioend отсутствует. Освобождение микрофона не подтверждено Web Speech.');
+      if(s.cancelledAt&&!s.endAt)lines.push('ВНИМАНИЕ: после отмены не подтверждено завершение аудиосессии.');
+    }
+    if(sessions.length>1){
+      lines.push('Предыдущие сеансы (без текста команд):');
+      for(const prev of sessions.slice(-5,-1))lines.push('#'+prev.id+' результат='+fmt(prev.resultAt)+' audioend='+fmt(prev.audioEndAt)+' end='+fmt(prev.endAt)+' отмена='+fmt(prev.cancelledAt));
     }
     lines.push('Последние события:');
     for(const e of d.events)lines.push(fmt(e.time)+'  '+e.event);
@@ -73,7 +81,7 @@ export function createVoiceController({
     report('idle',reason==='manual'?'Голосовой ввод отменён':'Речевой сеанс сброшен');
   }
   function fail(token,text){if(token!==epoch)return;cancel('timeout-or-error');report('idle',text);}
-  function beginRecognition(token,{fastEnd=false}={}){
+  function beginRecognition(token){
     if(token!==epoch)return;
     if(!Speech){fail(token,'Голосовой ввод недоступен. Используйте клавиатуру.');return;}
     let rec;
@@ -81,7 +89,8 @@ export function createVoiceController({
       rec=new Speech();
       rec.lang='ru-RU';rec.continuous=false;rec.interimResults=false;rec.maxAlternatives=1;
       recognizer=rec;result='';recognitionError='';capture='unknown';
-      session={id:(session?.id||0)+1,mode:fastEnd?'fast':'reliable',startedAt:now(),resultAt:null,audioStartAt:null,audioEndAt:null,endAt:null,cancelledAt:null};
+      session={id:(session?.id||0)+1,mode:'reliable',startedAt:now(),resultAt:null,audioStartAt:null,audioEndAt:null,endAt:null,cancelledAt:null};
+      sessions.push(session);if(sessions.length>6)sessions.shift();
       log('recognizer.start()');
       rec.onstart=()=>{if(token!==epoch)return;log('start');report('listening','Распознавание запущено. Произнесите команду.');};
       rec.onaudiostart=()=>{if(token!==epoch)return;capture='capturing';session.audioStartAt=now();log('audiostart');report('listening','Микрофон активен. Слушаю вашу команду.');};
@@ -105,11 +114,8 @@ export function createVoiceController({
         if(!session.resultAt)session.resultAt=now();
         log(finalReceived?'result(final)':'result');
         report('heard','Команда распознана. Жду завершения сеанса Safari…');
-        // Stop only on explicit opt-in: manual stop can make iPadOS 27's NEXT session deaf.
-        if(fastEnd&&finalReceived&&!session.stopRequestedAt){
-          session.stopRequestedAt=now();log('stop() experimental');
-          try{rec.stop()}catch{log('stop() error');}
-        }
+        // Intentionally DO NOT call stop() or abort() on successful final result.
+        // Confirmed WebKit 321436: the next recognition can start but become deaf.
         if(timeoutId!==null)clearTimer(timeoutId);
         timeoutId=setTimer(()=>{
           if(token!==epoch)return;
@@ -134,12 +140,12 @@ export function createVoiceController({
       };
       rec.onend=()=>{
         if(token!==epoch)return;
-        session.endAt=now();log('end');
+        session.endAt=now();log(session.audioEndAt?'end':'end (audioend missing)');
         clearTimers();detach(rec);recognizer=null;epoch++;
         if(capture!=='ended')capture='unconfirmed';
         const transcript=result;result='';
         if(transcript){
-          report('idle','Распознавание отключено. Команда выполнена.');
+          report('idle',capture==='unconfirmed'?'Команда выполнена; WebKit не сообщил audioend. Проверьте индикатор iPadOS.':'Команда выполнена; распознавание завершено.');
           onCommand(transcript);
         }else{
           report('idle',recognitionError?'Распознавание завершено: '+recognitionError:'Речь не распознана. Попробуйте снова.');
@@ -153,7 +159,7 @@ export function createVoiceController({
       fail(token,'Не удалось запустить микрофон: '+(e?.message||'ошибка Safari'));
     }
   }
-  function start({compatibility=false,fastEnd=false}={}){
+  function start({compatibility=false}={}){
     if(active())return false;
     if(!Speech){report('idle','Голосовое распознавание недоступно в этом браузере.');return false;}
     epoch++;const token=epoch;result='';recognitionError='';clearTimers();
@@ -166,14 +172,14 @@ export function createVoiceController({
           if(token!==epoch)return;
           if(preambleId!==null){clearTimer(preambleId);preambleId=null;}
           utterance.onend=null;utterance.onerror=null;speaking=null;
-          log('preamble.end');beginRecognition(token,{fastEnd});
+          log('preamble.end');beginRecognition(token);
         };
         utterance.onend=done;
         utterance.onerror=()=>{if(token===epoch)done();};
         preambleId=setTimer(()=>{if(token!==epoch)return;try{speechSynthesis.cancel()}catch{}done();},4500);
         speechSynthesis.speak(utterance);
-      }catch{beginRecognition(token,{fastEnd});}
-    }else beginRecognition(token,{fastEnd});
+      }catch{beginRecognition(token);}
+    }else beginRecognition(token);
     return true;
   }
   return {start,cancel,isActive:active,getStatus:()=>({stage,message,capture}),getDiagnostics:diagnostics,getDiagnosticText:diagnosticText};
