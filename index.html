@@ -11,11 +11,20 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
   <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
-  <link rel="stylesheet" href="./styles.css?v=1.2.0" />
-  <title>JARVIS OS — iPad Edition 1.2.0</title>
+  <link rel="stylesheet" href="./styles.css?v=2.0.0" />
+  <link rel="stylesheet" href="./cortex.css?v=2.0.0" />
+  <title>JARVIS OS — iPad Edition 2.0.0</title>
 </head>
 <body>
   <div id="app"><div class="boot"><div class="boot-core">J</div><strong>JARVIS OS</strong><small>ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА</small></div></div>
-  <script type="module" src="./app.js?v=1.2.0"></script>
+  <script>
+  window.addEventListener('error', function(e){
+    if(document.querySelector('.boot')) document.querySelector('.boot small').textContent='ОШИБКА ЗАГРУЗКИ: проверьте файлы обновления';
+  });
+  setTimeout(function(){const boot=document.querySelector('.boot');if(boot){
+    boot.querySelector('small').textContent='ЗАПУСК ЗАДЕРЖИВАЕТСЯ. ОТКРОЙТЕ СТРАНИЦУ В SAFARI И ПРОВЕРЬТЕ ОБНОВЛЕНИЕ.';
+  }},12000);
+  </script>
+  <script type="module" src="./app.js?v=2.0.0"></script>
 </body>
 </html>
