@@ -2,7 +2,7 @@
   "id": "./",
   "name": "JARVIS OS — iPad Edition",
   "short_name": "JARVIS",
-  "description": "Автономный командный центр JARVIS OS 0.2 для iPad с двумя окнами и интерактивным голографическим ядром.",
+  "description": "Автономный командный центр JARVIS OS 0.2.1 для iPad с двумя окнами и интерактивным голографическим ядром.",
   "lang": "ru",
   "start_url": "./index.html",
   "scope": "./",
