@@ -2,6 +2,9 @@
    This file NEVER executes downloaded code inside the privileged JARVIS origin. */
 import {escapeHTML as esc, makeId} from './db.js';
 const STORAGE='jarvis-os-apphub-v1';
+const DATABASE='jarvis-os-apphub-local-v2';
+const TABLE='catalog';
+const ROW='entries';
 const LIMIT=60;
 const presets=()=>[
  {id:'preset-skip',name:'СКиП',url:'',mode:'external',favorite:true,created:'',updated:''},
@@ -30,12 +33,54 @@ function cleanRecord(record){
  return {id,name,url,mode:record.mode==='embed'?'embed':'external',favorite:!!record.favorite,created:String(record.created||'').slice(0,40),updated:String(record.updated||'').slice(0,40)};
 }
 export function snapshotAppHub(){return {version:1,entries:entries.map(x=>({...x}))};}
-function save(){try{localStorage.setItem(STORAGE,JSON.stringify(snapshotAppHub()));return true}catch{return false}}
-export function loadAppHub(){try{
- const value=JSON.parse(localStorage.getItem(STORAGE)||'null');
- if(value&&Array.isArray(value.entries))importAppHub(value,false);
- else entries=presets();
- }catch{entries=presets()}
+// IndexedDB is the primary durable store. localStorage is kept for migration and fallback.
+// Neither is shared with Safari when an iPad Home Screen web app is isolated.
+function dbOpen(){return new Promise((resolve,reject)=>{
+ if(typeof indexedDB==='undefined')return reject(Error('IndexedDB недоступен'));
+ const req=indexedDB.open(DATABASE,1);
+ req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains(TABLE))req.result.createObjectStore(TABLE)};
+ req.onsuccess=()=>resolve(req.result);
+ req.onerror=()=>reject(req.error||Error('Ошибка IndexedDB'));
+ req.onblocked=()=>reject(Error('Хранилище занято другой вкладкой'));
+});}
+function limitTime(promise,ms=3500){let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Тайм-аут хранилища')),ms)})]).finally(()=>clearTimeout(timer));}
+async function idbRead(){const database=await limitTime(dbOpen());try{return await limitTime(new Promise((resolve,reject)=>{
+ const tx=database.transaction(TABLE,'readonly');const req=tx.objectStore(TABLE).get(ROW);
+ req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error||Error('Не удалось прочесть каталог'));
+ tx.onabort=()=>reject(tx.error||Error('Чтение отменено'));
+ }));}finally{database.close()}}
+async function idbWrite(snapshot){const database=await limitTime(dbOpen());try{await limitTime(new Promise((resolve,reject)=>{
+ const tx=database.transaction(TABLE,'readwrite');tx.objectStore(TABLE).put(snapshot,ROW);
+ tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error||Error('Ошибка записи'));
+ tx.onabort=()=>reject(tx.error||Error('Запись отменена'));
+ }));}finally{database.close()}}
+function localRead(){try{const raw=localStorage.getItem(STORAGE);return raw?JSON.parse(raw):null}catch{return null}}
+function snapshotTime(s){return typeof s?.savedAt==='string'?s.savedAt:''}
+function connectedCount(a){return a.filter(x=>x.url).length}
+function safeParse(snapshot){try{return snapshot?parseAppHubSnapshot(snapshot):null}catch{return null}}
+async function persistDraft(draft){
+ const snapshot={version:1,savedAt:new Date().toISOString(),entries:draft.map(x=>({...x}))};
+ const json=JSON.stringify(snapshot);
+ let durable=false;
+ // Two independent backends: one failed backend must not erase a successful write.
+ try{await idbWrite(snapshot);const check=await idbRead();if(JSON.stringify(check)!==json)throw Error('Проверка IndexedDB не совпала');durable=true}
+ catch(error){console.warn('APP HUB IndexedDB:',error)}
+ try{localStorage.setItem(STORAGE,json);if(localStorage.getItem(STORAGE)!==json)throw Error('Проверка localStorage не совпала');durable=true}
+ catch(error){console.warn('APP HUB localStorage:',error)}
+ if(!durable)throw Error('Браузер не подтвердил сохранение. Попробуйте открыть JARVIS заново, не очищая данные Safari.');
+ return snapshot;
+}
+export async function loadAppHub(){
+ const local=localRead();const fromLocal=safeParse(local);
+ let indexed=null,fromIDB=null;
+ try{indexed=await idbRead();fromIDB=safeParse(indexed)}catch(error){console.warn('APP HUB load:',error)}
+ let selected=fromIDB,selectedMeta=indexed;
+ if(fromLocal&&(!fromIDB||snapshotTime(local)>snapshotTime(indexed)||(snapshotTime(local)===snapshotTime(indexed)&&connectedCount(fromLocal)>connectedCount(fromIDB)))){
+   selected=fromLocal;selectedMeta=local;
+ }
+ entries=selected||presets();
+ // Upgrade existing v2.1 localStorage entries without losing old links.
+ if(selected&&selectedMeta===local&&!fromIDB){try{await idbWrite({version:1,savedAt:snapshotTime(local),entries})}catch(error){console.warn('APP HUB migrate:',error)}}
  return getApps();
 }
 function parseAppHubSnapshot(value){
@@ -45,12 +90,12 @@ function parseAppHubSnapshot(value){
  return result;
 }
 export function validateAppHubSnapshot(value){return parseAppHubSnapshot(value).length;}
-export function importAppHub(value,persist=true){
- entries=parseAppHubSnapshot(value);if(persist&&!save())throw Error('Не удалось сохранить каталог в Safari');return getApps();
+export async function importAppHub(value,persist=true){
+ const next=parseAppHubSnapshot(value);if(persist)await persistDraft(next);entries=next;return getApps();
 }
 export function getApps(){return entries.map(x=>({...x})).sort((a,b)=>Number(b.favorite)-Number(a.favorite)||a.name.localeCompare(b.name,'ru'));}
 export function getApp(id){const x=entries.find(e=>e.id===id);return x?{...x}:null;}
-export function upsertApp(form){
+export async function upsertApp(form){
  const id=String(form.id||'').trim();const name=String(form.name||'').trim().slice(0,64);
  if(!name)throw Error('Введите название приложения');
  if(entries.some(e=>e.id!==id&&nrm(e.name)===nrm(name)))throw Error('Такое название уже используется в каталоге');
@@ -61,11 +106,11 @@ export function upsertApp(form){
  if(!existing&&entries.length>=LIMIT)throw Error('Лимит каталога: 60 приложений');
  const time=new Date().toISOString();
  const record={id:existing?.id||makeId(),name,url,mode:form.mode==='embed'?'embed':'external',favorite:existing?.favorite??false,created:existing?.created||time,updated:time};
- if(existing)entries=entries.map(e=>e.id===existing.id?record:e);else entries.push(record);
- if(!save())throw Error('Не удалось сохранить каталог');return {...record};
+ const next=existing?entries.map(e=>e.id===existing.id?record:e):[...entries,record];
+ await persistDraft(next);entries=next;return {...record};
 }
-export function deleteApp(id){entries=entries.filter(e=>e.id!==id);if(!save())throw Error('Не удалось сохранить изменения');}
-export function toggleFavorite(id){entries=entries.map(e=>e.id===id?{...e,favorite:!e.favorite}:e);if(!save())throw Error('Не удалось сохранить изменения');}
+export async function deleteApp(id){const next=entries.filter(e=>e.id!==id);await persistDraft(next);entries=next;}
+export async function toggleFavorite(id){const next=entries.map(e=>e.id===id?{...e,favorite:!e.favorite}:e);await persistDraft(next);entries=next;}
 export function findAppCommand(utterance){
  const input=nrm(utterance);
  if(!/^(открой|открыть|запусти|запуск|покажи|перейди в|включи)\s+/.test(input))return null;
@@ -76,13 +121,13 @@ export function canEmbed(app,origin){
  if(!app?.url||app.mode!=='embed')return false;
  try{return new URL(app.url).origin!==origin}catch{return false}
 }
-export function appHubView({editing=null,formVisible=false}={}){
+export function appHubView({editing=null,formVisible=false,origin=''}={}){
  const list=getApps();const count=list.filter(x=>x.url).length;
  const edit=editing?getApp(editing):null;
- return `<div class="hub-screen"><div class="hub-header"><div><div class="hub-eyebrow">JARVIS / APPLICATION GATEWAY / 2.1</div><h2>APP <em>HUB</em></h2><p>Ваши веб-приложения в одном командном центре. Ссылки и настройки хранятся только на этом iPad.</p></div><div class="hub-header-stat"><strong>${count}</strong><span>ПОДКЛЮЧЕНО</span></div></div>
+ return `<div class="hub-screen"><div class="hub-header"><div><div class="hub-eyebrow">JARVIS / APPLICATION GATEWAY / 2.1.1</div><h2>APP <em>HUB</em></h2><p>Ваши веб-приложения в одном командном центре. Каталог сохраняется с проверкой в локальном хранилище iPad.</p></div><div class="hub-header-stat"><strong>${count}</strong><span>ПОДКЛЮЧЕНО</span></div></div>
  <div class="hub-toolbar"><span>ПРИЛОЖЕНИЯ · ${list.length}</span><input id="hub-search" type="search" autocomplete="off" placeholder="Поиск по названию…" aria-label="Поиск по каталогу"/><button class="primary-btn" data-action="hub-new">＋ Добавить сайт</button></div>
- ${formVisible?`<form class="hub-form" id="apphub-form"><div class="hub-form-head"><h3>${edit?'Редактировать приложение':'Добавить веб-приложение'}</h3><button type="button" class="icon-button" data-action="hub-cancel">×</button></div><input type="hidden" name="id" value="${esc(edit?.id||'')}"/><label>Название<input name="name" required maxlength="64" placeholder="Например: СКиП" value="${esc(edit?.name||'')}"/></label><label>Адрес опубликованного сайта<input name="url" required type="url" inputmode="url" placeholder="https://имя.github.io/проект/" value="${esc(edit?.url||'')}"/></label><label>Способ запуска<select name="mode"><option value="external" ${edit?.mode!=='embed'?'selected':''}>Отдельно в Safari — рекомендуется для GitHub Pages</option><option value="embed" ${edit?.mode==='embed'?'selected':''}>В окне JARVIS — если сайт разрешает встраивание</option></select></label><p>Добавляйте ссылку GitHub Pages, не адрес репозитория github.com. Для внешних сайтов понадобится интернет. Никаких паролей и токенов.</p><div class="hub-form-actions"><button class="primary-btn" type="submit">Сохранить приложение</button><button type="button" class="secondary-btn" data-action="hub-cancel">Отмена</button></div></form>`:''}
- <div class="hub-cards">${list.map(app=>`<article class="hub-card" data-hub-name="${esc(nrm(app.name))}"><div class="hub-card-top"><div class="hub-monogram">${esc(app.name.slice(0,2).toUpperCase())}</div><button class="hub-star ${app.favorite?'is-fav':''}" data-action="hub-favorite" data-id="${esc(app.id)}" aria-label="${app.favorite?'Убрать из избранного':'В избранное'}">${app.favorite?'★':'☆'}</button></div><strong>${esc(app.name)}</strong><small>${app.url?esc(new URL(app.url).hostname):'НЕТ ССЫЛКИ · ТРЕБУЕТ НАСТРОЙКИ'}</small><div class="hub-card-status">${app.url?'● ГОТОВО К ЗАПУСКУ':'○ НЕ ПОДКЛЮЧЕНО'} · ${app.mode==='embed'?'ОКНО':'SAFARI'}</div><div class="hub-card-actions">${app.url?`<button class="primary-btn" data-action="hub-launch" data-id="${esc(app.id)}">Запустить ↗</button>`:`<button class="primary-btn" data-action="hub-edit" data-id="${esc(app.id)}">Подключить ↗</button>`}<button class="secondary-btn" data-action="hub-edit" data-id="${esc(app.id)}" aria-label="Редактировать">✎</button><button class="secondary-btn" data-action="hub-delete" data-id="${esc(app.id)}" aria-label="Удалить">×</button></div></article>`).join('')}</div>
+ ${formVisible?`<form class="hub-form" id="apphub-form" novalidate><div class="hub-form-head"><h3>${edit?'Редактировать приложение':'Добавить веб-приложение'}</h3><button type="button" class="icon-button" data-action="hub-cancel">×</button></div><input type="hidden" name="id" value="${esc(edit?.id||'')}"/><label>Название<input name="name" required maxlength="64" placeholder="Например: СКиП" value="${esc(edit?.name||'')}"/></label><label>Адрес опубликованного сайта<input name="url" required type="url" inputmode="url" placeholder="https://имя.github.io/проект/" value="${esc(edit?.url||'')}"/></label><label>Способ запуска<select name="mode"><option value="external" ${edit?.mode!=='embed'?'selected':''}>Отдельно в Safari — рекомендуется для GitHub Pages</option><option value="embed" ${edit?.mode==='embed'?'selected':''}>В окне JARVIS — если сайт разрешает встраивание</option></select></label><p>Добавляйте ссылку GitHub Pages, не адрес репозитория github.com. Для внешних сайтов понадобится интернет. Никаких паролей и токенов.</p><div class="hub-form-actions"><button class="primary-btn" type="button" data-action="hub-save">Сохранить приложение</button><button type="button" class="secondary-btn" data-action="hub-cancel">Отмена</button></div></form>`:''}
+ <div class="hub-cards">${list.map(app=>`<article class="hub-card" data-hub-name="${esc(nrm(app.name))}"><div class="hub-card-top"><div class="hub-monogram">${esc(app.name.slice(0,2).toUpperCase())}</div><button class="hub-star ${app.favorite?'is-fav':''}" data-action="hub-favorite" data-id="${esc(app.id)}" aria-label="${app.favorite?'Убрать из избранного':'В избранное'}">${app.favorite?'★':'☆'}</button></div><strong>${esc(app.name)}</strong><small>${app.url?esc(new URL(app.url).hostname):'НЕТ ССЫЛКИ · ТРЕБУЕТ НАСТРОЙКИ'}</small><div class="hub-card-status">${app.url?'● ГОТОВО К ЗАПУСКУ':'○ НЕ ПОДКЛЮЧЕНО'} · ${app.mode==='embed'?'ОКНО':'SAFARI'}</div><div class="hub-card-actions">${app.url?(canEmbed(app,origin)?`<button class="primary-btn" data-action="hub-launch" data-id="${esc(app.id)}">Запустить ↗</button>`:`<a class="primary-btn" href="${esc(app.url)}" target="_blank" rel="noopener noreferrer">Запустить ↗</a>`):`<button class="primary-btn" data-action="hub-edit" data-id="${esc(app.id)}">Подключить ↗</button>`}<button class="secondary-btn" data-action="hub-edit" data-id="${esc(app.id)}" aria-label="Редактировать">✎</button><button class="secondary-btn" data-action="hub-delete" data-id="${esc(app.id)}" aria-label="Удалить">×</button></div></article>`).join('')}</div>
  <div class="hub-notice">🔒 Сторонние сайты не получают доступ к базе JARVIS. Встраивание зависит от ограничений сайта и Safari. Для сайтов на том же домене, что и JARVIS, используется запуск отдельно ради безопасности.</div></div>`;
 }
 export function appHubFrameView(app,origin){
