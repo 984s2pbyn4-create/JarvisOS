@@ -1,7 +1,7 @@
 /* Scope-aware offline cache. All paths relative to this worker's directory. */
-const VERSION='jarvis-ipad-offline-2.0.0';
+const VERSION='jarvis-ipad-offline-2.1.0';
 const ROOT=new URL('./',self.location.href);
-const PRECACHE=['./','./index.html','./styles.css','./manifest.webmanifest','./app.js','./db.js','./icons.js','./hologram.js','./holodeck.js','./bridge.js','./cortex.js','./atlas.js','./cortex.css','./commands.js','./voice.js','./productivity.js','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
+const PRECACHE=['./','./index.html','./styles.css','./manifest.webmanifest','./app.js','./db.js','./icons.js','./hologram.js','./holodeck.js','./bridge.js','./cortex.js','./atlas.js','./cortex.css','./apphub.css','./apphub.js','./commands.js','./voice.js','./productivity.js','./icon-192.png','./icon-512.png','./apple-touch-icon.png'];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(VERSION).then(cache=>cache.addAll(PRECACHE.map(path=>new URL(path,ROOT).toString()))));
   // Let active clients finish; new worker activates on restart.
